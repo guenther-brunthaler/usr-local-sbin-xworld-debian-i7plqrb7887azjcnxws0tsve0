@@ -1,0 +1,315 @@
+#! /bin/sh
+bu_suffix=.dpkg-old
+upstream_suffix=.upstream
+final_suffix=.patch
+edit_suffix=.custom-changes
+sitedir=site-6n580p79r0flmgyv0feaxchll.d
+ignores=$sitedir/ignored-upstream-files.list
+overwrites=$sitedir/unconditionally-replace-upstream-versions.list
+
+set -e
+cleanup() {
+	rc=$?
+	test "$TD" && rm -r -- "$TD"
+	test $rc = 0 || echo "$0 failed!" >& 2;
+}
+TD=
+trap cleanup 0
+trap 'exit $?' HUP INT TERM QUIT
+
+DEBUG=false
+recreate_upstream=false
+drop_unchanged=true
+while getopts ueD opt
+do
+	case $opt in
+		e) drop_unchanged=false;;
+		u) recreate_upstream=true;;
+		D) DEBUG=true;;
+		*) false || exit
+	esac
+done
+shift `expr $OPTIND - 1 || :`
+
+die() {
+	echo "ERROR: $*" >& 2
+	false || exit
+}
+
+safe_rename() {
+	test -e "$2" && die "'$1' needs to be renamed into '$2', but the" \
+		"latter file already exists!"
+	mv -- "$1" "$2"
+}
+
+
+# Detect current directory.
+base=`pwd`
+if test "$base" = .
+then
+	base=`readlink -f .`
+fi
+test "${base#/}" != "$base"
+
+# Make sure we are in /etc or in some version of it mounted elsewhere.
+test -f "$base/fstab"
+
+warn() {
+	echo "WARNING: $*" >& 2
+}
+
+if $recreate_upstream
+then
+	created=0
+	for cust
+	do
+		if test -f "$cust"
+		then
+			ups=$cust$upstream_suffix
+			if test -e "$ups"
+			then
+				warn "Not replacing already existing '$ups'!"
+				continue
+			fi
+			pa=$cust$final_suffix
+			if test ! -e "$pa"
+			then
+				warn "Cannot re-crate '$ups' without '$pa'!"
+				continue
+			fi
+			cp -p -- "$cust" "$ups"
+			patch -Rui "$pa" -- "$ups" > /dev/null
+			created=`expr $created + 1`
+		else
+			warn "Skipping non-existing '$cust'!"
+		fi
+	done
+	echo "Re-created $created upstream files." >& 2
+	exit
+fi
+
+# Rename all package maintainer's versions to end with $upstream_suffix and
+# rename all customized versions back to the original names.
+find . -name "*$bu_suffix" | while IFS= read -r bu
+do
+	bu=${bu#./}
+	cust=${bu%"$bu_suffix"}
+	ups=$cust$upstream_suffix
+	echo "Found new mainainer's version of '$cust'..."
+	safe_rename "$cust" "$ups"
+	safe_rename "$bu" "$cust"
+done
+
+TD=`mktemp -d -- "${TMPDIR:-/tmp}/${0##*/}.XXXXXXXXXX"`
+
+println() {
+	printf '%s\n' "$*"
+}
+
+hash_fname() {
+	println "$1" | md5sum | cut -d ' ' -f 1
+}
+
+export LC_COLLATE=C # Make sorting order independent of locale.
+
+# Make a list of possibly available upstream files.
+find . -name "*$upstream_suffix" | while IFS= read -r ups
+do
+	ups=${ups#./}
+	cust=${ups%"$upstream_suffix"}
+	test "$cust"
+	id=`hash_fname "$cust"`
+	println "$id $cust"
+done | sort > "$TD"/possible
+
+ck_list_file() {
+	sort -c -- "$1" || die "Lines in '$1' are not bytewise sorted!"
+	if grep -E '^([[:space:]]*#|[.]/|/|[[:space:]]*$)' "$1"
+	then
+		die "Not all relative paths in file list '$1' meet" \
+			"the requirements dictated by $0!"
+	fi
+}
+
+# Filter out upstream files to be completely ignored.
+if test -f "$ignores"
+then
+	ck_list_file "$ignores"
+	while IFS= read -r ups
+	do
+		cust=${ups%"$upstream_suffix"}
+		test "$cust"
+		hash_fname "$cust"
+	done < "$ignores"
+fi | sort > "$TD"/t
+join -v1 -- "$TD"/possible "$TD"/t > "$TD"/all
+$DEBUG || rm -- "$TD"/possible
+
+fprops() {
+	stat -c '%t:%D %f %u:%g' -- "$1"
+}
+
+# Verify permissions and ownership matches between upstream and customized
+# versions
+while IFS= read -r cust
+do
+	# In contrary to "read -r dummy cust", this preserves trailing spaces
+	# in file names.
+	cust=${cust#*" "}
+	ups=$cust$upstream_suffix
+	test -f "$cust" || die "There is an upstream file '$ups', but no" \
+		"actual customized file '$cust'!"
+	if test "`fprops "$cust"`" != "`fprops "$ups"`"
+	then
+		{
+			stat -- "$cust"
+			stat -- "$ups"
+		} >& 2
+		die "There are file attribute differences between the" \
+			"customized '$cust' and its upstream version '$ups'!"
+	fi
+	if $DEBUG
+	then
+		echo "attr OK: $ups" >& 2
+	fi
+done < "$TD"/all
+
+# Process upstream files which shall be replaced by customized files
+# unconditionally without any attempt to merge them.
+if test -f "$overwrites"
+then
+	ck_list_file "$overwrites"
+	while IFS= read -r cust
+	do
+		test "${cust%"$upstream_suffix"}" = "$cust"
+		hash_fname "$cust"
+	done < "$overwrites"
+fi | sort > "$TD"/t
+join -- "$TD"/all "$TD"/t | while IFS= read -r cust
+do
+	cust=${cust#*" "}
+	ups=$cust$upstream_suffix
+	echo "Replacing upstream version of '$cust' with customized one." >& 2
+	rm -f -- "$ups"
+done
+join -v1 -- "$TD"/all "$TD"/t > "$TD"/remaining
+
+# Remove synthetic primary key field.
+while IFS= read -r cust
+do
+	cust=${cust#*" "}
+	println "$cust"
+done < "$TD"/remaining | sort > "$TD"/all
+
+# $1: file1, $2: file2, $3: output patch
+do_diff() {
+	local rc
+	LC_ALL=C TZ=UTC0 diff -u -- "$1" "$2" > "$3" && rc=$? || rc=$?
+	test $rc -le 1
+}
+
+# Remove any comments at the beginning of a unified diff $1 , strip the date
+# and timestamps created by LC_ALL=C TZ=UTC0 from the end of the "+++" and
+# "---" lines, then output the rest unmodified.
+normalize_patch() {
+	local oldspec
+	if test ! -s "$1"
+	then
+		case $1 in
+			/*) return
+		esac
+		warn "Ignoring empty patch '$1'!"
+		return
+	fi
+	while IFS= read -r line
+	do
+		case $line in
+			'--- '*) oldspec=$line; continue;;
+			'+++ '*)
+				if test "$oldspec"
+				then
+					{
+						println "$oldspec"
+						println "$line"
+					} | sed 's/[-+.:[:space:]0-9]*$//'
+					cat
+					return
+				fi
+		esac
+		oldspec=
+	done < "$1"
+	warn "Ignoring broken existing patch '$1'!"
+}
+
+# Remove upstream versions of files for which patches already exist, apply
+# perfectly, and produce the same results. Do not remove the upstream files,
+# however, if preliminary patches for manual editing exist.
+while IFS= read -r cust
+do
+	ups=$cust$upstream_suffix
+	pa=$cust$final_suffix
+	pre=$cust$edit_suffix
+	if test ! -e "$pa" || test -e "$pre"
+	then
+		println "$cust"
+		continue
+	fi
+	normalize_patch "$pa" > "$TD"/old.norm
+	do_diff "$ups" "$cust" "$TD"/patch
+	normalize_patch "$TD"/patch > "$TD"/new.norm
+	if $drop_unchanged && cmp -s -- "$TD"/new.norm "$TD"/old.norm
+	then
+		echo "Removing unchanged '$ups'." >& 2
+		rm -- "$ups"
+	else
+		println "$cust"
+	fi
+done < "$TD"/all > "$TD"/remaining
+$DEBUG || rm -f -- "$TD"/old.norm "$TD"/new.norm "$TD"/patch "$TD"/all
+
+# Is existing file $1 newer than existing file $2?
+is_newer() {
+	local f1
+	case $1 in
+		-*) f1=./$1;;
+		*) f1=$1
+	esac
+	test "`find "$f1" -newer $2`" || return
+}
+
+# Create or process preliminary patches for manually editing. The timestamp of
+# the upstream copies is used as an indicator whether to overwrite or process
+# an already-existing preliminary patch.
+while IFS= read -r cust
+do
+	ups=$cust$upstream_suffix
+	pa=$cust$final_suffix
+	pre=$cust$edit_suffix
+	if test -e "$pre"
+	then
+		if is_newer "$pre" "$ups"
+		then
+			# Finalize an edited patch to become the final patch.
+			recountdiff < "$pre" > "$TD"/patch
+			# Apply then re-create patch in order to ensure it
+			# will apply cleanly without fuzz.
+			cat -- "$ups" > "$TD"/cust
+			patch -ui "$TD"/patch -- "$TD"/cust > /dev/null
+			echo "Updating '$pa' from '$pre'..." >& 2
+			cp -p -- "$cust" "$pa"
+			do_diff "$ups" "$cust" "$pa"
+			rm -f -- "$ups" "$pre"
+			git add -- "$cust" "$pa"
+		else
+			# Delete preliminary patches which were not
+			# manually edited.
+			echo "Removing '$pre' because you didn't edit." >& 2
+			rm -- "$pre"
+		fi
+	else
+		echo "Creating '$pre' to be edited manually!" >& 2
+		cp -p -- "$cust" "$pre" # Clone attributes.
+		do_diff "$ups" "$cust" "$pre"
+		touch "$ups"
+	fi
+done < "$TD"/remaining
