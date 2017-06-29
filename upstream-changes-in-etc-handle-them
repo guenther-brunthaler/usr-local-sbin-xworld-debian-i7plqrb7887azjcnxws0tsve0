@@ -65,6 +65,7 @@ then
 	created=0
 	for cust
 	do
+		cust=${cust%"$final_suffix"}
 		if test -f "$cust"
 		then
 			ups=$cust$upstream_suffix
