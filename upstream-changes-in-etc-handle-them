@@ -20,9 +20,11 @@ trap 'exit $?' HUP INT TERM QUIT
 DEBUG=false
 recreate_upstream=false
 drop_unchanged=true
-while getopts ueD opt
+use_git=true
+while getopts ueDG opt
 do
 	case $opt in
+		G) use_git=false;;
 		e) drop_unchanged=false;;
 		u) recreate_upstream=true;;
 		D) DEBUG=true;;
@@ -299,7 +301,10 @@ do
 			cp -p -- "$cust" "$pa"
 			do_diff "$ups" "$cust" "$pa"
 			rm -f -- "$ups" "$pre"
-			git add -- "$cust" "$pa"
+			if $use_git
+			then
+				git add -f -- "$cust" "$pa"
+			fi
 		else
 			# Delete preliminary patches which were not
 			# manually edited.
