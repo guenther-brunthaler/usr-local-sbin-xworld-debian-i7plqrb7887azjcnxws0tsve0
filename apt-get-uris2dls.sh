@@ -1,4 +1,12 @@
 #! /bin/sh
+# Create script $script_name which downloads and checksum-verifies a list of
+# updates read from standard input in the same format as output by "apt-get
+# upgrade --print-uris -qq".
+#
+# The downloads in the script will be sorted such that smaller one will be
+# downloaded first.
+script_name=dls.sh
+
 set -e
 trap 'test $? = 0 || echo "$0 failed!" >& 2' 0
 {
@@ -31,6 +39,13 @@ sha256() {
 EOF
 	while IFS= read -r u
 	do
+		eval "set -- $u"
+		printf '%s\n' "$3:$u"
+	done \
+	| LC_COLLATE=C LC_NUMERIC=C sort -t : -nk 1,1 \
+	| while IFS= read -r u
+	do
+		u=${u#*:}
 		r=${u##*"'"}; u=${u%"'$r"}; u=${u#"'"}; r=${r#" "}
 		eval "set -- $r"
 		f=$1; s=$2; m=$3
@@ -52,4 +67,4 @@ EOF
 			false || exit
 		fi
 	done
-} | tee dls.sh
+} | tee "$script_name"
