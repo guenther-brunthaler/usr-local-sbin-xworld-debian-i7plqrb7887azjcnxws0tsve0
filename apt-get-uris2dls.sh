@@ -3,8 +3,18 @@
 # updates read from standard input in the same format as output by "apt-get
 # upgrade --print-uris -qq".
 #
+# If standard input is a terminal, however, do not read an update list from
+# it, but rather obtain the list of updates directly from "apt-get upgrade
+# --print-uris -qq".
+#
 # The downloads in the script will be sorted such that smaller one will be
 # downloaded first.
+#
+# It might be a good idea to run the generated script from
+# /var/cache/apt/archives/partial/ where apt-get will put downloads it did
+# start but which are not complete yet. The script may then finish them. After
+# downloading everything successfully, move the downloaded complete files to
+# /var/cache/apt/archives/.
 script_name=dls.sh
 
 set -e
@@ -13,9 +23,10 @@ trap 'test $? = 0 || echo "$0 failed!" >& 2' 0
 	cat << 'EOF'
 #! /bin/sh
 set -e
+VERBOSE=${1+" "} # Any argument makes the script display progress.
 
 dl() {
-	wget -c -q -O "$f" "$1${2+"$f"}"
+	wget -c${VERBOSE:- -q }-O "$f" "$1${2+"$f"}"
 }
 
 compare_cs() {
@@ -37,7 +48,13 @@ sha256() {
 }
 
 EOF
-	while IFS= read -r u
+	if test -t 0
+	then
+		apt-get upgrade --print-uris -qq
+	else
+		cat
+	fi \
+	| while IFS= read -r u
 	do
 		eval "set -- $u"
 		printf '%s\n' "$3:$u"
