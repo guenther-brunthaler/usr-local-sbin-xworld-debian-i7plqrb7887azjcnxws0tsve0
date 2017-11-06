@@ -45,3 +45,6 @@ test -f "$APT_CACHE"
 do_rsync apt-lists /var/lib/apt/lists --delete
 test -z "$DRY_RUN" && run "$APT_CACHE" gencaches
 do_rsync apt-archives /var/cache/apt/archives
+d=/var/cache/apt/manually
+test -d "$d" || run mkdir "$d"
+do_rsync apt-manually "$d"
