@@ -1,0 +1,54 @@
+#! /bin/sh
+# Make usage of "dpkg-diversion" really easy for --local diversions. Just pass
+# the files to be diverted as arguments.
+#
+# Version 2017.354
+#
+# Copyright (c) 2017 Guenther Brunthaler. All rights reserved.
+# 
+# This source file is free software.
+# Distribution is permitted under the terms of the GPLv3.
+
+set -e
+trap 'test $? = 0 || echo "$0 failed!" >& 2' 0
+
+emul=
+ext=.disabled
+while getopts nx: opt
+do
+	case $opt in
+		n) emul=echo;;
+		x) ext=$OPTARG; test "$ext";;
+		*) false || exit
+	esac
+done
+shift `expr $OPTIND - 1 || :`
+
+for d
+do
+	test -f "$d"
+done
+
+cdir=`pwd`
+test -d "$cdir"
+test "${cdir#/}" != "$cdir"
+
+for d
+do
+	case $d in
+		/*) ;;
+		*) d=${cdir%%/}/$d
+	esac
+	o=${d%"$ext"}
+	if test "$o" = "$d"
+	then
+		d=$o$ext
+		$emul dpkg-divert --local --rename --divert "$d" -- "$o"
+		$emul test -e "$d"
+		$emul test ! -e "$o"
+	else
+		$emul dpkg-divert --rename --remove -- "$o"
+		$emul test ! -e "$d"
+		$emul test -e "$o"
+	fi
+done
