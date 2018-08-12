@@ -1,0 +1,246 @@
+#! /bin/sh
+exit_version() {
+	wr << EOF; exit
+$APP version 2018.221
+Copyright (c) 2018 Guenther Brunthaler. All rights reserved.
+
+This script is free software.
+Distribution is permitted under the terms of the GPLv3.
+EOF
+}
+APP=${0##*/}
+
+exit_help() {
+	wr --flowtext << EOF; echo; exit_version
+$APP - create empty metapackages which just depend on other packages
+
+Usage: $APP [ <options> ] [--] [ <software_name> ] <dependencies> ...
+
+$APP synthesizes a new pseudo *.deb file which depends on the specified other
+Debian packages, but does not install any actual files (other than the package
+information) on its own.
+
+Then it installs this pseudo-package, forcing the automatic installation of
+its dependencies.
+
+The difference between using $APP and installing the dependent packages
+manually without a metapackage is that uninstalling $APP later will also
+uninstall the dependencies (when "apt-get autoremove" is run as it will be
+suggested by "apt-get remove", and assuming no other package also needs them
+as dependencies).
+
+The name of the pseudo-package will be composed of <software_name>, a dash,
+and a random ID. The latter ensures uniqueness of the resulting pseudo-package
+name, even if <software_name> should happen to be the name of an
+already-installed package.
+
+<software_name> may optionally include version numbers, allowing different
+dependency pseudo-packages to be created for different versions of
+<software_name>.
+
+Note that <software_name> does not need to be the name of any actually
+installed or available Debian package; the name may very well be that of some
+manually built software that is not installed by any package manager but has
+rather been installed manually or not at all (it will just be run where it has
+been built).
+
+There are two ways to declare the dependencies for <software_name>: Either as
+the single argument of option -d using the syntax shown by "dpkg -s" for
+"Depends:" lines.
+
+Or the remaining arguments will be used as dependencies. In this case
+alternatives can be specified with "-o" ("or").
+
+The following two commands are therefore equivalent:
+
+\$ $APP -d 'dep1, dep2preferred | dep2alternative, dep3' mysoftware-1.4
+
+\$ $APP mysoftware-1.4 dep1 dep2preferred -o dep2alternative dep3
+
+It is illegal to mix both variants: If the -d option with its single option
+argument is present, then no normal non-options arguments are allowed and vice
+versa.
+
+Option -a can be used if the metapackage for suite shall have the same
+<software_name> as one of the existing packages in the suite. With -a,
+<software_name> is omitted and the name of the first dependency will be also
+become the <software_name>. For instance,
+
+\$ $APP -a julia julia-doc
+
+creates a "software suite"-style pseudo-package with a <software_name> of
+"julia", containing the two already-existing packages "julia" and "julia-doc"
+as dependencies. This has exactly the same meaning as
+
+\$ $APP julia julia julia-doc
+
+but saves typing "julia" twice.
+
+In order to get rid of the installed pseudo-package (and its automatically
+installed dependencies) later, just use "apt-get remove" or "dpkg -r" like for
+any normal package.
+
+For instance,
+
+\$ apt-get purge mysoftware-1.4 && apt-get autoremove --purge
+
+removes the pseudo-package and all of its automatically installed dependencies
+(including any configuration files installed by those) completely.
+
+Supported options:
+
+-d <deps>: Specify the dependencies as a single argument in the same syntax
+used by "Depends:"-lines displayed by "dpkg -s".
+
+-a: Automatic naming. Normally, <software_name> must be explicitly specified.
+When specifying the dependencies as separate options, i. e. when option -d is
+not used, then option -a selects the name as the fist dependency also as the
+<software_name>. Obviously, this must not be combined with option -d. -a is
+highly useful when creating suite packages using the primary package of the
+suite also as the suite's metapackage <software_name>.
+
+-m: Change the text in the description of the synthesized metapackage in order
+to indicate that the specified software name is actually the name of a
+manually-installed and/or locally built software. Without -m, the package name
+is just assumed to be the name of a new software bundle which keeps several
+other, all pre-existing packages installed as its dependencies.
+
+-V: Display the version of this script and exit.
+
+-h: Display this help and exit.
+EOF
+}
+
+set -e
+cleanup() {
+	rc=$?
+	test "$TD" && rm -r -- "$TD"
+	test $rc = 0 || echo "$0 failed" >& 2
+}
+TD=
+trap cleanup 0
+trap 'exit $?' HUP INT TERM QUIT
+
+println() {
+	printf '%s\n' "$*"
+}
+
+die() {
+	println "$*" >& 2
+	false || exit
+}
+
+wr() {
+	case $# in
+		0) fold -sw $WRAP_WIDTH | sed 's/[[:space:]]*$//';;
+		*)
+			local line para
+			para=
+			while IFS= read -r line
+			do
+				case ${#line} in
+					0)
+						printf '%s\n\n' "$para" | wr
+						para=
+						;;
+					*) para=$para${para:+ }$line
+				esac
+			done
+			test "$para" && println "$para" | wr
+	esac
+}
+test -t 0 && WRAP_WIDTH=`tput cols 2> /dev/null` || WRAP_WIDTH=66
+test $WRAP_WIDTH -gt 132 && WRAP_WIDTH=72
+
+deps=
+implied_name=false
+just_a_bundle=true
+while getopts amd:Vh opt
+do
+	case $opt in
+		a) implied_name=true;;
+		m) just_a_bundle=false;;
+		d) deps=$OPTARG;;
+		h) exit_help;;
+		V) exit_version;;
+		*) false || exit
+	esac
+done
+shift `expr $OPTIND - 1 || :`
+
+psdpkn=$1
+test "$psdpkn" || die "Missing name of pseudo package to synthesize!"
+shift
+if test "$deps"
+then
+	$implied_name && die "Option -a is incompatible with option -d!"
+	deps=`println "$deps" | tr -dc '[:graph:]'`
+	test $# = 0 || die "Option -d and the presence of non-option" \
+		"arguments are mutually exclusive!"
+else
+	if $implied_name
+	then
+		case $psdpkn in
+			-* | *[,\|\ ]*)
+				die "Invalid suite name '$psdpkn'" \
+					"(option -a is in effect)!";;
+		esac
+		set -f; set -- "$psdpkn" "$@"; set +f
+	fi
+	deps=
+	nsep=
+	for dep
+	do
+		case $dep in
+			-o) nsep='|';;
+			-* | *[,\|\ ]*) die "Invalid dependency '$dep'!";;
+			*) deps=$deps$nsep$dep; nsep=,
+		esac
+	done
+fi
+expr x",$deps" : x'\([,|][^,|]\{1,\}\)\{1,\}$' > /dev/null \
+	|| die "Incorrect syntax in derived dependency string: >>>$deps<<<!"
+deps=`println "$deps" | sed 's/,/& /g; s/|/ | /g'`
+
+command -v equivs-control > /dev/null 2>& 1 || sudo apt-get install equivs
+TD=`mktemp -d -- "${TMPDIR:-/tmp}/$APP".XXXXXXXXXX`
+(
+	cd -- "$TD"
+	dp=$psdpkn-`
+		dd if=/dev/urandom bs=1 count=\`expr 103 / 8\` 2> /dev/null \
+		| od -A n -t x1 | tr -dc '[:xdigit:]'
+	`
+	if $just_a_bundle
+	then
+		pkgtype='software-bundle metapackage'
+		dp=$dp && echo "Metapackage $psdpkn: $dp"
+	else
+		pkgtype='manually-installed package'
+		dp=$dp && echo "Dependency pseudo-package for $psdpkn: $dp"
+	fi
+	equivs-control dctrl
+	sed -i '
+		h
+		s/^#*[[:space:]]*//; t nop1
+		: nop1
+		s/^\(Package: \).*/\1/; t pn
+		s/^\(Description: \).*/\1/; t pd
+		s/^\(Depends: \).*/\1/; t deps
+		g
+		s/^[[:space:]].*//
+		b
+		: pn
+		s/$/'"$dp"'/
+		b
+		: pd
+		s/$/Dependencies for '"$pkgtype"' '"$psdpkn"'/
+		b
+		: deps
+		s/$/'"$deps"'/
+	' dctrl
+	equivs-build dctrl
+	rm dctrl
+	sudo dpkg -i -- "`ls -t1 -- *.deb | head -n 1`" \
+	|| sudo apt-get install -f \
+	|| die "Please run 'sudo apt-get install -f' until successful!"
+)
