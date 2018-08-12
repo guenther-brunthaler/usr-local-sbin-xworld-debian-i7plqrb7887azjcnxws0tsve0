@@ -1,7 +1,7 @@
 #! /bin/sh
 exit_version() {
 	wr << EOF; exit
-$APP version 2018.221
+$APP version 2018.224
 Copyright (c) 2018 Guenther Brunthaler. All rights reserved.
 
 This script is free software.
@@ -11,7 +11,7 @@ EOF
 APP=${0##*/}
 
 exit_help() {
-	wr --flowtext << EOF; echo; exit_version
+	wr --flowtext << EOF
 $APP - create empty metapackages which just depend on other packages
 
 Usage: $APP [ <options> ] [--] [ <software_name> ] <dependencies> ...
@@ -30,9 +30,12 @@ suggested by "apt-get remove", and assuming no other package also needs them
 as dependencies).
 
 The name of the pseudo-package will be composed of <software_name>, a dash,
-and a random ID. The latter ensures uniqueness of the resulting pseudo-package
-name, even if <software_name> should happen to be the name of an
-already-installed package.
+and a truncated MD5-hash of the sorted dependencies. The latter ensures
+uniqueness of the resulting pseudo-package name, even if <software_name>
+should happen to be the name of an already-installed package. On the other
+hand, differently-named pseudo-packages actually representing the same
+dependencies can easily be identified by comparing the name parts after the
+last dash.
 
 <software_name> may optionally include version numbers, allowing different
 dependency pseudo-packages to be created for different versions of
@@ -87,6 +90,23 @@ For instance,
 removes the pseudo-package and all of its automatically installed dependencies
 (including any configuration files installed by those) completely.
 
+Sometimes one might want to find all metpackages currently installed with
+$APP, e. g. for using "dpkg-repack" on them and copying them over to a
+different machine.
+
+For this purpose, all packages installed with $APP provide a virtual package
+"$marker", which allows to use the following command for locating those
+packages:
+
+EOF
+wr << 'EOF'
+$ dpkg-query -Wf '${Package} ${Provides}\n' \
+| sed 's/ .*03e4d2fe9e3b11e88c3db827.*//; t; d' | sort
+
+EOF
+wr -f << EOF
+Alternatively, the -l option of $APP can be used which does the same.
+
 Supported options:
 
 -d <deps>: Specify the dependencies as a single argument in the same syntax
@@ -105,10 +125,13 @@ manually-installed and/or locally built software. Without -m, the package name
 is just assumed to be the name of a new software bundle which keeps several
 other, all pre-existing packages installed as its dependencies.
 
+-l: List all metapackages locally installed via $APP, sorted by name.
+
 -V: Display the version of this script and exit.
 
 -h: Display this help and exit.
 EOF
+	echo; exit_version
 }
 
 set -e
@@ -146,21 +169,57 @@ wr() {
 					*) para=$para${para:+ }$line
 				esac
 			done
-			test "$para" && println "$para" | wr
+			if test "$para"
+			then
+				println "$para" | wr
+			fi
 	esac
 }
 test -t 0 && WRAP_WIDTH=`tput cols 2> /dev/null` || WRAP_WIDTH=66
 test $WRAP_WIDTH -gt 132 && WRAP_WIDTH=72
 
+if { : | md5sum | grep ^d4; } > /dev/null 2>& 1
+then
+	md5() {
+		md5sum -b | sed 's/ .*//'
+	}
+elif { : | openssl md5 | grep ' d4'; } > /dev/null 2>& 1
+then
+	md5() {
+		openssl md5 | sed 's/.*[[:space:]]//'
+	}
+else
+	die "md5sum or openssl is required to be installed!"
+fi
+
+mkid() {
+	printf '%s\n' "$1" | sed 's/[[:space:]]*//g; s/,/\n/' \
+	| LC_COLLATE=C sort -u \
+	| { tr '\n' ','; echo; } | sed 's/,$//' | tr -d '\n' \
+	| md5 | sed 's/\(.\{'`expr 103 / 8 \* 2`'\}\).*/\1/'
+}
+
+list_installed() {
+	dpkg-query -Wf '${Package} ${Provides}\n' \
+	| sed 's/ .*03e4d2fe9e3b11e88c3db827.*//; t; d' | sort
+}
+
+compatibility_list_installed() {
+	dpkg-query -Wf '${Package}\n' | grep -- '-[[:xdigit:]]\{24\}$' | sort
+}
+
+marker='meta-03e4d2fe9e3b11e88c3db827' # Truncated time-based UUID.
 deps=
 implied_name=false
 just_a_bundle=true
-while getopts amd:Vh opt
+while getopts amd:lLVh opt
 do
 	case $opt in
 		a) implied_name=true;;
 		m) just_a_bundle=false;;
 		d) deps=$OPTARG;;
+		l) list_installed; exit;;
+		L) compatibility_list_installed; exit;;
 		h) exit_help;;
 		V) exit_version;;
 		*) false || exit
@@ -206,10 +265,7 @@ command -v equivs-control > /dev/null 2>& 1 || sudo apt-get install equivs
 TD=`mktemp -d -- "${TMPDIR:-/tmp}/$APP".XXXXXXXXXX`
 (
 	cd -- "$TD"
-	dp=$psdpkn-`
-		dd if=/dev/urandom bs=1 count=\`expr 103 / 8\` 2> /dev/null \
-		| od -A n -t x1 | tr -dc '[:xdigit:]'
-	`
+	dp=$psdpkn-`mkid "$deps"`
 	if $just_a_bundle
 	then
 		pkgtype='software-bundle metapackage'
@@ -238,6 +294,7 @@ TD=`mktemp -d -- "${TMPDIR:-/tmp}/$APP".XXXXXXXXXX`
 		: deps
 		s/$/'"$deps"'/
 	' dctrl
+	echo "Provides: $marker" >> dctrl
 	equivs-build dctrl
 	rm dctrl
 	sudo dpkg -i -- "`ls -t1 -- *.deb | head -n 1`" \
