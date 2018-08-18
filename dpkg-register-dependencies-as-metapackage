@@ -1,7 +1,7 @@
 #! /bin/sh
 exit_version() {
 	wr << EOF; exit
-$APP version 2018.224
+$APP version 2018.229
 Copyright (c) 2018 Guenther Brunthaler. All rights reserved.
 
 This script is free software.
@@ -125,6 +125,15 @@ manually-installed and/or locally built software. Without -m, the package name
 is just assumed to be the name of a new software bundle which keeps several
 other, all pre-existing packages installed as its dependencies.
 
+-s <directory>: Save a copy of the metapackage *.deb file into the specified
+directory in addition to installing its extracted contents into the
+filesystem. This also remembers the location for future installations, so from
+all future invocations of $APP will behave as if the same -s option had been
+specified. Use an empty string as <directory> to disable/remove this setting
+(will also be remembered). Storing *.deb metapackages anywhere is not
+necessary but allows one to copy them to different machines for installation
+there via "dpkg -i" without a need to run $APP again.
+
 -l: List all metapackages locally installed via $APP, sorted by name.
 
 -V: Display the version of this script and exit.
@@ -201,18 +210,62 @@ mkid() {
 
 list_installed() {
 	dpkg-query -Wf '${Package} ${Provides}\n' \
-	| sed 's/ .*03e4d2fe9e3b11e88c3db827.*//; t; d' | sort
+	| sed 's/ .*'${marker#*-}'.*//; t; d' | sort
 }
 
 compatibility_list_installed() {
 	dpkg-query -Wf '${Package}\n' | grep -- '-[[:xdigit:]]\{24\}$' | sort
 }
 
-marker='meta-03e4d2fe9e3b11e88c3db827' # Truncated time-based UUID.
+# Set $SETTINGSFILE to the pathname of an XDG-compliant settings file and
+# create it as an empty file if it does not exist yet. Detects existing older
+# variants of names for $SETTINGSFILE with the same application UUID and
+# renames it to the current name variant in $SETTINGSFILE.
+#
+# Argument: 128-bit application UUID (in display-formatted byte order) as 25
+# digits (alphanumerics w/o letter "o") in base-35.
+prepare_SETTINGSFILE() {
+	expr x"$1" : x'\([0-9a-np-z]\)\{25\}$' > /dev/null
+	test -n "$HOME" && test -d "$HOME"
+	: ${XDG_DATA_HOME:=$HOME/.local/share}
+	SETTINGSFILE=$XDG_DATA_HOME/misc/${0##*/}_$1.cfg
+	if test ! -e "$SETTINGSFILE"
+	then
+		(
+			d=`dirname "$SETTINGSFILE"`
+			f=`basename "$SETTINGSFILE"`
+			ensure_dir() {
+				test -d "$1" && return
+				ensure_dir "`dirname \"$1\"`"
+				mkdir -m 700 "$1" || exit
+			}
+			ensure_dir "$d"
+			found=
+			for old in "$d"/*$1*
+			do
+				if test -f "$old"
+				then
+					mv -- "$old" "$SETTINGSFILE" || exit
+					found=Y
+					break
+				fi
+			done
+			if test -z "$found"
+			then
+				> "$SETTINGSFILE"
+				chmod 600 -- "$SETTINGSFILE"
+			fi
+		)
+	fi
+}
+
+B35APPID=0fv8ek05qaeul44qfbdzbuj6i # time-based UUID, converted to base-35.
+marker='meta-03e4d2fe9e3b11e88c3db827' # Same UUID in hex, truncated to 96 bit.
 deps=
 implied_name=false
 just_a_bundle=true
-while getopts amd:lLVh opt
+unset package_save_dir
+while getopts amd:s:lLVh opt
 do
 	case $opt in
 		a) implied_name=true;;
@@ -220,6 +273,7 @@ do
 		d) deps=$OPTARG;;
 		l) list_installed; exit;;
 		L) compatibility_list_installed; exit;;
+		s) package_save_dir=$OPTARG; test -d "$package_save_dir";;
 		h) exit_help;;
 		V) exit_version;;
 		*) false || exit
@@ -261,6 +315,29 @@ expr x",$deps" : x'\([,|][^,|]\{1,\}\)\{1,\}$' > /dev/null \
 	|| die "Incorrect syntax in derived dependency string: >>>$deps<<<!"
 deps=`println "$deps" | sed 's/,/& /g; s/|/ | /g'`
 
+prepare_SETTINGSFILE $B35APPID
+if test "${package_save_dir+y}"
+then
+	case $package_save_dir in
+		*\'*) die "No single quotes allowed in package directory path!"
+	esac
+	echo "package_save_dir='$package_save_dir'" > "$SETTINGSFILE"
+else
+	package_save_dir=`
+		unset package_save_dir
+		. "$SETTINGSFILE"
+		println "$package_save_dir"
+	`
+	if test "$package_save_dir"
+	then
+		test -d "$package_save_dir" || die "The currently defined" \
+			"package saving directory '$package_save_dir' does" \
+			"not exit - please use option -s to define a new" \
+			"location (or to disable it by specifying an empty" \
+			"string)."
+	fi
+fi
+
 command -v equivs-control > /dev/null 2>& 1 || sudo apt-get install equivs
 TD=`mktemp -d -- "${TMPDIR:-/tmp}/$APP".XXXXXXXXXX`
 (
@@ -297,7 +374,14 @@ TD=`mktemp -d -- "${TMPDIR:-/tmp}/$APP".XXXXXXXXXX`
 	echo "Provides: $marker" >> dctrl
 	equivs-build dctrl
 	rm dctrl
-	sudo dpkg -i -- "`ls -t1 -- *.deb | head -n 1`" \
+	deb=`ls -t1 -- *.deb | head -n 1`
+	if test "$package_save_dir"
+	then
+		cp -- "$deb" "$package_save_dir"/
+		echo "Saved a copy of the generated metapackage" \
+			"as '$package_save_dir/$deb'."
+	fi
+	sudo dpkg -i -- "$deb" \
 	|| sudo apt-get install -f \
 	|| die "Please run 'sudo apt-get install -f' until successful!"
 )
