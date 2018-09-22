@@ -1,7 +1,7 @@
 #! /bin/sh
 exit_version() {
 	wr << EOF; exit
-$APP version 2018.229
+$APP version 2018.265
 Copyright (c) 2018 Guenther Brunthaler. All rights reserved.
 
 This script is free software.
@@ -64,6 +64,13 @@ It is illegal to mix both variants: If the -d option with its single option
 argument is present, then no normal non-options arguments are allowed and vice
 versa.
 
+For option -d, the "or"-operator ("|") binds tighter than the "and"-operator
+(","), and the the individual package names can optionally be followed by ":"
+and an architecture specification. After this, an optional version restriction
+in parentheses may follow, such as "dep1 (>= 1.4)" where the following
+relational operators are supported: "<<", "<=", "=", ">=", ">>", where "<<"
+and "<<" mean "less than" and "greater than", respectively.
+
 Option -a can be used if the metapackage for suite shall have the same
 <software_name> as one of the existing packages in the suite. With -a,
 <software_name> is omitted and the name of the first dependency will be also
@@ -112,6 +119,9 @@ Supported options:
 -d <deps>: Specify the dependencies as a single argument in the same syntax
 used by "Depends:"-lines displayed by "dpkg -s".
 
+-p <deps>: Specify pre-dependencies in addition to -d or the depencendies
+specified as normal arguments. This is only necessary in special situations.
+
 -a: Automatic naming. Normally, <software_name> must be explicitly specified.
 When specifying the dependencies as separate options, i. e. when option -d is
 not used, then option -a selects the name as the fist dependency also as the
@@ -124,6 +134,13 @@ to indicate that the specified software name is actually the name of a
 manually-installed and/or locally built software. Without -m, the package name
 is just assumed to be the name of a new software bundle which keeps several
 other, all pre-existing packages installed as its dependencies.
+
+-r <version>: Use <version> rather than the default version number
+$default_version when generating the package. You should probably bump the
+version number if you revise the dependencies of a meta-package. Even though
+such packages will get different hex-digits appended as part of their names
+anyway, specifying a higher version number helps understanding which of those
+similar package names shall be considered newer.
 
 -s <directory>: Save a copy of the metapackage *.deb file into the specified
 directory in addition to installing its extracted contents into the
@@ -201,6 +218,9 @@ else
 	die "md5sum or openssl is required to be installed!"
 fi
 
+# Problem: The order of alternatives will not be normalized. I am not even
+# sure this is actually a problem, assuming the alternatives might have to be
+# ordered by preference of auto-selection.
 mkid() {
 	printf '%s\n' "$1" | sed 's/[[:space:]]*//g; s/,/\n/' \
 	| LC_COLLATE=C sort -u \
@@ -261,15 +281,20 @@ prepare_SETTINGSFILE() {
 
 B35APPID=0fv8ek05qaeul44qfbdzbuj6i # time-based UUID, converted to base-35.
 marker='meta-03e4d2fe9e3b11e88c3db827' # Same UUID in hex, truncated to 96 bit.
+predeps=
 deps=
 implied_name=false
 just_a_bundle=true
 unset package_save_dir
-while getopts amd:s:lLVh opt
+default_version=1.0
+version=$default_version
+while getopts r:amp:d:s:lLVh opt
 do
 	case $opt in
+		r) version=$OPTARG;;
 		a) implied_name=true;;
 		m) just_a_bundle=false;;
+		p) predeps=$OPTARG;;
 		d) deps=$OPTARG;;
 		l) list_installed; exit;;
 		L) compatibility_list_installed; exit;;
@@ -281,9 +306,11 @@ do
 done
 shift `expr $OPTIND - 1 || :`
 
+expr x"$version" : x'[[:alnum:]][-+_.[:alnum:]]*$' > /dev/null
 psdpkn=$1
 test "$psdpkn" || die "Missing name of pseudo package to synthesize!"
 shift
+predeps=`println "$predeps" | tr -dc '[:graph:]'`
 if test "$deps"
 then
 	$implied_name && die "Option -a is incompatible with option -d!"
@@ -311,9 +338,26 @@ else
 		esac
 	done
 fi
-expr x",$deps" : x'\([,|][^,|]\{1,\}\)\{1,\}$' > /dev/null \
-	|| die "Incorrect syntax in derived dependency string: >>>$deps<<<!"
-deps=`println "$deps" | sed 's/,/& /g; s/|/ | /g'`
+sed_script='
+	# dep1,dep2 -> dep1, dep2
+	s/,/& /g
+	# dep1|dep2 -> dep1 | dep2
+	s/|/ & /g
+	# dep(...) -> dep1 (...)
+	s/(/ &/g
+	# dep(>=3.1) -> dep1 (>= 3.1)
+	s/([<=>]\{1,\}/& /g
+'
+for def in predeps:pre-dependencies deps:"derived dependency"
+do
+	vn=${def%:*}; def="${def#*:} string"
+	eval v=\$$vn
+	test -z "$v" && continue
+	expr x",$v" : x'\([,|][^,|]\{1,\}\)\{1,\}$' > /dev/null \
+		|| die "Incorrect syntax in $def: >>>$v<<<!"
+	v=`println "$v" | sed "$sed_script"`
+	eval $vn=\$v
+done
 
 prepare_SETTINGSFILE $B35APPID
 if test "${package_save_dir+y}"
@@ -352,26 +396,32 @@ TD=`mktemp -d -- "${TMPDIR:-/tmp}/$APP".XXXXXXXXXX`
 		dp=$dp && echo "Dependency pseudo-package for $psdpkn: $dp"
 	fi
 	equivs-control dctrl
+	pdesc="Dependencies for $pkgtype $psdpkn"
 	sed -i '
 		h
-		s/^#*[[:space:]]*//; t nop1
-		: nop1
-		s/^\(Package: \).*/\1/; t pn
-		s/^\(Description: \).*/\1/; t pd
-		s/^\(Depends: \).*/\1/; t deps
+		# Delete folded continuation lines.
+		/^[[:space:]]\{1,\}[^#[:space:]]/ d
+		s/^#*[[:space:]]*\(Package:\).*/\1 '"$dp"'/; t substed
+		s/^#*[[:space:]]*\(Version:\).*/\1 '"$version"'/; t substed
+		s/^#*[[:space:]]*\(Description:\).*/\1 '"$pdesc"'/; t substed
+		s/^#*[[:space:]]*\(Depends:\).*/\1 '"$deps"'/; t substed
+		s/^#*[[:space:]]*\(Pre-Depends:\).*/\1 '"$predeps"'/; t substed
+		s/^#*[[:space:]]*\(Provides:\).*/\1 '"$marker"'/; t substed
+		# No changes.
+		b
+		:substed
+		# Substituted with an empty value?
+		/^[^:]*:[[:space:]]*$/ b disable
+		# No empty value, accept changes.
+		b
+		:disable
+		# No useful substitutions were made. Disable entry.
 		g
-		s/^[[:space:]].*//
-		b
-		: pn
-		s/$/'"$dp"'/
-		b
-		: pd
-		s/$/Dependencies for '"$pkgtype"' '"$psdpkn"'/
-		b
-		: deps
-		s/$/'"$deps"'/
+		# Was original line already commented-out?
+		/^[[:space:]]*#/ b
+		# No, comment it out ourselves.
+		s/^/#/
 	' dctrl
-	echo "Provides: $marker" >> dctrl
 	equivs-build dctrl
 	rm dctrl
 	deb=`ls -t1 -- *.deb | head -n 1`
