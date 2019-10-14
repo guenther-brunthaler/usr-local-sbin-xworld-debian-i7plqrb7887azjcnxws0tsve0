@@ -1,7 +1,0 @@
-Symlink this file into
-
-/usr/local/etc/profile.d
-
-This will include the parent directory of this directory into the $PATH
-automatically if the contents of the beforementioned directory are sourced by
-each login shell.
