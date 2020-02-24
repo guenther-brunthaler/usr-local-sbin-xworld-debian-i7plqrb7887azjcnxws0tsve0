@@ -3,9 +3,9 @@
 # the files to be diverted or already diverted as arguments. The diversion
 # status of the argument files will be toggled.
 #
-# Version 2017.355
+# Version 2020.55
 #
-# Copyright (c) 2017 Guenther Brunthaler. All rights reserved.
+# Copyright (c) 2017-2020 Guenther Brunthaler. All rights reserved.
 # 
 # This source file is free software.
 # Distribution is permitted under the terms of the GPLv3.
@@ -16,6 +16,7 @@ trap 'test $? = 0 || echo "$0 failed!" >& 2' 0
 emul=
 default_ext=.disabled
 dist_ext=.distrib
+etc_store=/etc/upstream-versions-dbkkywcqxlt7w1u854dz5hhbk.d
 common_ext="$default_ext $dist_ext"
 ext=
 while getopts dnx: opt
@@ -38,38 +39,66 @@ cdir=`pwd`
 test -d "$cdir"
 test "${cdir#/}" != "$cdir"
 
+divert() {
+	$emul dpkg-divert --local --rename \
+		--divert "$d" -- "$o"
+	$emul test -e "$d"
+	$emul test ! -e "$o"
+}
+
+undivert() {
+	$emul dpkg-divert --rename --remove -- "$o"
+	$emul test ! -e "$d"
+	$emul test -e "$o"
+}
+
+ensure_parent() {
+	mkdir -p -- "`dirname -- "$1"`"
+}
+
 for d
 do
 	case $d in
 		/*) ;;
 		*) d=${cdir%%/}/$d
 	esac
-	cext=$ext
-	if test -z "$cext"
-	then
-		# No extension has been explicitly specified. Check for common
-		# ones.
-		for pext in $common_ext
-		do
-			if test "${d%"$pext"}" != "$d"
+	case $d in
+		"$etc_store"/*)
+			o=/etc/${d#"$etc_store/"}
+			ensure_parent "$o"
+			undivert
+			;;
+		/etc/*)
+			o=$d
+			d=$etc_store/${o#/etc/}
+			ensure_parent "$d"
+			divert
+			;;
+		*)
+			cext=$ext
+			if test -z "$cext"
 			then
-				cext=$pext
-				break
+				# No extension has been explicitly specified.
+				# Check for common ones.
+				for pext in $common_ext
+				do
+					if test "${d%"$pext"}" != "$d"
+					then
+						cext=$pext
+						break
+					fi
+				done
+				# If no common extension did match, use the
+				# default.
+				test -z "$cext" && cext=$default_ext
 			fi
-		done
-		# If no common extension did match, use the default.
-		test -z "$cext" && cext=$default_ext
-	fi
-	o=${d%"$cext"}
-	if test "$o" = "$d"
-	then
-		d=$o$cext
-		$emul dpkg-divert --local --rename --divert "$d" -- "$o"
-		$emul test -e "$d"
-		$emul test ! -e "$o"
-	else
-		$emul dpkg-divert --rename --remove -- "$o"
-		$emul test ! -e "$d"
-		$emul test -e "$o"
-	fi
+			o=${d%"$cext"}
+			if test "$o" = "$d"
+			then
+				d=$o$cext
+				divert
+			else
+				undivert
+			fi
+	esac
 done
