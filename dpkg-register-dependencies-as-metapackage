@@ -1,8 +1,8 @@
 #! /bin/sh
 exit_version() {
 	wr << EOF; exit
-$APP version 2018.265
-Copyright (c) 2018 Guenther Brunthaler. All rights reserved.
+$APP version 2020.56
+Copyright (c) 2018-2020 Guenther Brunthaler. All rights reserved.
 
 This script is free software.
 Distribution is permitted under the terms of the GPLv3.
@@ -298,7 +298,13 @@ do
 		d) deps=$OPTARG;;
 		l) list_installed; exit;;
 		L) compatibility_list_installed; exit;;
-		s) package_save_dir=$OPTARG; test -d "$package_save_dir";;
+		s)
+			package_save_dir=$OPTARG
+			if test "$package_save_dir"
+			then
+				test -d "$package_save_dir"
+			fi
+			;;
 		h) exit_help;;
 		V) exit_version;;
 		*) false || exit
