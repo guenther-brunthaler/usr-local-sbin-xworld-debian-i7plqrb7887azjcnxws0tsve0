@@ -3,7 +3,7 @@
 # the files to be diverted or already diverted as arguments. The diversion
 # status of the argument files will be toggled.
 #
-# Version 2020.55
+# Version 2020.62
 #
 # Copyright (c) 2017-2020 Guenther Brunthaler. All rights reserved.
 # 
@@ -19,9 +19,11 @@ dist_ext=.distrib
 etc_store=/etc/upstream-versions-dbkkywcqxlt7w1u854dz5hhbk.d
 common_ext="$default_ext $dist_ext"
 ext=
-while getopts dnx: opt
+old_style=
+while getopts odnx: opt
 do
 	case $opt in
+		o) old_style=/var/empty;;
 		n) emul=echo;;
 		x) ext=$OPTARG; test "$ext";;
 		d) ext=$dist_ext;;
@@ -68,7 +70,7 @@ do
 			ensure_parent "$o"
 			undivert
 			;;
-		/etc/*)
+		$old_style/etc/*)
 			o=$d
 			d=$etc_store/${o#/etc/}
 			ensure_parent "$d"
