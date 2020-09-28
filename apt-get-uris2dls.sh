@@ -15,10 +15,13 @@
 # start but which are not complete yet. The script may then finish them. After
 # downloading everything successfully, move the downloaded complete files to
 # /var/cache/apt/archives/.
+#
+# Version v2020.270
 script_name=dls.sh
 
 set -e
 trap 'test $? = 0 || echo "$0 failed!" >& 2' 0
+t=0
 {
 	cat << 'EOF'
 #! /bin/sh
@@ -67,6 +70,8 @@ EOF
 		eval "set -- $r"
 		f=$1; s=$2; m=$3
 		echo "f='$f'"
+		t=`expr $t + $s || :`
+		echo "b=$s; t=$t"
 		if test x"${u%"$f"}" != x"$u"
 		then
 			echo "dl '${u%"$f"}' +"
