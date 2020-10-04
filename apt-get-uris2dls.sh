@@ -3,6 +3,9 @@
 # updates read from standard input in the same format as output by "apt-get
 # upgrade --print-uris -qq".
 #
+# If the script is called with any command-line argument, "dist-upgrade" is
+# used instead of just "upgrade" as part of the beforementioned command.
+#
 # If standard input is a terminal, however, do not read an update list from
 # it, but rather obtain the list of updates directly from "apt-get upgrade
 # --print-uris -qq".
@@ -16,7 +19,7 @@
 # downloading everything successfully, move the downloaded complete files to
 # /var/cache/apt/archives/.
 #
-# Version v2020.270
+# Version v2020.278
 script_name=dls.sh
 
 set -e
@@ -53,7 +56,11 @@ sha256() {
 EOF
 	if test -t 0
 	then
-		apt-get upgrade --print-uris -qq
+		case $# in
+			0) u=upgrade;;
+			*) u=dist-upgrade
+		esac
+		apt-get $u --print-uris -qq
 	else
 		cat
 	fi \
