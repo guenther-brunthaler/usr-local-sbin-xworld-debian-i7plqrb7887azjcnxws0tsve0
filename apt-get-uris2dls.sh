@@ -19,7 +19,7 @@
 # downloading everything successfully, move the downloaded complete files to
 # /var/cache/apt/archives/.
 #
-# Version v2020.278
+# Version v2020.301
 script_name=dls.sh
 
 set -e
@@ -51,6 +51,11 @@ md5() {
 
 sha256() {
 	compare_cs sha256sum 64 "$1"
+}
+
+nock() {
+	echo "No checksum for '$f'!" >& 2
+	false || exit
 }
 
 EOF
@@ -91,6 +96,9 @@ EOF
 		elif s=${m#SHA256:} && test x"$s" != x"$m"
 		then
 			echo "sha256 $s"
+		elif test -z "$m"
+		then
+			echo nock
 		else
 			echo "Unsupported checksum type: $m" >& 2
 			false || exit
