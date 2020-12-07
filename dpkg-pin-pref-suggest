@@ -1,0 +1,49 @@
+#! /bin/sh
+# Accept a list of package names and/or .deb files on input and write the
+# contents of a suitable /etc/apt/preferences.d/*.pref file to standard output
+# which would pin the currently installed versions of those packages (or the
+# version of the packages containes within the .deb files) so that those
+# package versions (if they are installed) would never be updated.
+#
+# v2020.342
+# Copyright (c) 2020 Guenther Brunthaler. All rights reserved.
+#
+# This script is free software.
+# Distribution is permitted under the terms of the GPLv3.
+
+set -e
+trap 'test $? = 0 || echo "\"$0\" failed!" >& 2' 0
+
+while getopts '' opt
+do
+	case $opt in
+		*) false || exit
+	esac
+done
+shift `expr $OPTIND - 1 || :`
+
+get_pkg_version() {
+	awk -f /dev/fd/9 9<< '---'
+		$1 == "Package:" {p= $2}
+		$1 == "Version:" {v= $2}
+		END {print p " " v}
+---
+}
+
+for p
+do
+	case $p in
+		*.deb) test -f "$p" && dpkg-deb -W "$p";;
+		*) dpkg -s "$p" | get_pkg_version
+	esac
+done \
+| LC_COLLATE=C sort \
+| while read p v
+do
+	cat <<- .
+
+		Package: $p
+		Pin: version $v
+		Pin-Priority: 1001
+.
+done
