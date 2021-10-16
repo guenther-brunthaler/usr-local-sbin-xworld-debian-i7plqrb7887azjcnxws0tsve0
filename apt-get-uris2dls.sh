@@ -3,8 +3,9 @@
 # updates read from standard input in the same format as output by "apt-get
 # upgrade --print-uris -qq".
 #
-# If the script is called with any command-line argument, "dist-upgrade" is
-# used instead of just "upgrade" as part of the beforementioned command.
+# If the script is called with any command-line argument, "upgrade
+# --with-new-pkgs" is used instead of just "upgrade" as part of the
+# beforementioned command.
 #
 # If standard input is a terminal, however, do not read an update list from
 # it, but rather obtain the list of updates directly from "apt-get upgrade
@@ -19,7 +20,7 @@
 # downloading everything successfully, move the downloaded complete files to
 # /var/cache/apt/archives/.
 #
-# Version v2020.301
+# Version v2021.289
 script_name=dls.sh
 
 set -e
@@ -63,7 +64,7 @@ EOF
 	then
 		case $# in
 			0) u=upgrade;;
-			*) u=dist-upgrade
+			*) u='upgrade --with-new-pkgs'
 		esac
 		apt-get $u --print-uris -qq
 	else
