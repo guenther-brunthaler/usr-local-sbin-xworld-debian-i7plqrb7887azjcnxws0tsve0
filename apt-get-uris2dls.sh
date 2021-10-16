@@ -1,14 +1,14 @@
 #! /bin/sh
 # Create script $script_name which downloads and checksum-verifies a list of
 # updates read from standard input in the same format as output by "apt-get
-# upgrade --print-uris -qq".
+# upgrade --with-new-pkgs --print-uris -qq".
 #
-# If the script is called with any command-line argument, "upgrade
-# --with-new-pkgs" is used instead of just "upgrade" as part of the
-# beforementioned command.
+# If the script is called with any command-line argument, it is ignored for
+# compatibility with earlier versions of this script (which performed a more
+# thorough upgrade in this case).
 #
 # If standard input is a terminal, however, do not read an update list from
-# it, but rather obtain the list of updates directly from "apt-get upgrade
+# it, but rather obtain the list of updates directly from "apt-get ...
 # --print-uris -qq".
 #
 # The downloads in the script will be sorted such that smaller one will be
@@ -62,11 +62,7 @@ nock() {
 EOF
 	if test -t 0
 	then
-		case $# in
-			0) u=upgrade;;
-			*) u='upgrade --with-new-pkgs'
-		esac
-		apt-get $u --print-uris -qq
+		apt-get upgrade --with-new-pkgs --print-uris -qq
 	else
 		cat
 	fi \
