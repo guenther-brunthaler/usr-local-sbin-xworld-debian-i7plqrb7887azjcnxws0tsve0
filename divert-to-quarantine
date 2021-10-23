@@ -1,0 +1,21 @@
+#! /bin/sh
+# Divert a list of unwanted file pathnames read from standard input to a
+# quarantine location.
+#
+# Version 2021.296
+#
+# Copyright (c) 2021 Guenther Brunthaler. All rights reserved.
+#
+# This script is free software.
+# Distribution is permitted under the terms of the GPLv3.
+
+set -e
+trap 'test $? = 0 || echo "\"$0\" failed!" >& 2' 0
+
+o=/usr/lib/diverted/locally-61dlqyl1x3qsafpirtt0u8er7
+while IFS= read -r p
+do
+	d=$o$p
+	mkdir -p -- "${d%/*}"
+	dpkg-divert --rename --local --divert="$d" "$p"
+done
