@@ -1,0 +1,103 @@
+#! /usr/bin/env perl
+
+# Break apart a Debian package file name, a Debian package name plus version,
+# or just a Debian version number.
+#
+# Version 2024.71
+# Copyright (c) 2024 Guenther Brunthaler. All rights reserved.
+#
+# This script is free software.
+# Distribution is permitted under the terms of the GPLv3.
+
+# filename: <pv> "_" <arch> "." "deb"
+#
+# arch: "[A-Za-z0-9]+".
+#
+# pv: <package-name> "_" <version>
+#
+# version: [ <epoch> ":" ] <upstream-version> [ "-" <debian-revision> ].
+#
+# epoch: "[0-9]+". If it is omitted then the upstream-version may not contain
+# any colons.
+#
+# upstream-version: "[0-9][-.+:~A-Za-z0-9]*". If there is no debian-revision
+# then hyphens are not allowed; if there is no epoch then colons are not
+# allowed.
+#
+# debian-revision: "[+.~A-Za-z0-9]+". It is optional.
+
+use strict;
+use warnings qw(all);
+use autodie;
+use open ':locale';
+use Getopt::Std;
+
+# Return the only defined argument, if any. Otherwise return <undef>.
+# Verify that at most one argument is actually defined.
+sub odaia(@) {
+   my @defs;
+   foreach my $e (@_) {
+      next unless defined $e;
+      push @defs, $e;
+   }
+   if (@defs > 1) {
+      die
+            "Mutually exclusive cases ("
+         .  join(', ', map qq'"$_"', @defs)
+         .  ") match!"
+      ;
+   }
+   return $defs[0];
+}
+
+my(@n, $k, %result, $package, $epoch, $version, $revision, $arch);
+
+{
+   our $opt_e;
+   getopts('e') or die;
+   @n = ($opt_e ? () : 0);
+}
+
+while (defined($_= <>)) {
+   chomp;
+   if (
+      /
+         (?: (?<package> [[:graph:]]+? ) _ )?
+         (?:
+               (?<version1> [0-9] [.+~A-Za-z0-9]* )
+            |  (?<version2> [0-9] [-.+~A-Za-z0-9]* )
+               - (?<revision1> [+.~A-Za-z0-9]+ )
+            |  (?<epoch1> [0-9]+) : (?<version3> [0-9] [.+:~A-Za-z0-9]* )
+            |  (?<epoch2> [0-9]+) : (?<version4> [0-9] [-.+:~A-Za-z0-9]* )
+               - (?<revision2> [+.~A-Za-z0-9]+ )
+         ) (?:
+            _  (?<arch> [~A-Za-z0-9]+ ) [.] deb
+         )?
+      /x
+   ) {
+      %result = (
+            package => $+{package}
+         ,  epoch => odaia($+{epoch1}, $+{epoch2})
+         ,  version => odaia(
+               $+{version1}, $+{version2}, $+{version3}, $+{version4}
+            )
+         ,  revision => odaia($+{revision1}, $+{revision2})
+         ,  arch => $+{arch}
+      );
+   } else {
+      %result = (illegal => $_);
+   }
+   ++$n[0] if @n;
+   print map
+         "$_\n"
+      ,  map {
+         join "\n"
+            ,  join(' ', @$_)
+            ,  !@n && @$_ ? 'end' : ()
+      } grep {@{$_}} map {
+            $k = $_;
+            [map {@n, $k, $_} grep defined, $result{$k}]
+      } sort keys %result
+   or die $!;
+}
+STDOUT->flush() or die $!;
