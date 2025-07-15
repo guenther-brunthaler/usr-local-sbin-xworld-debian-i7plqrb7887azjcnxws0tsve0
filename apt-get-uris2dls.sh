@@ -20,11 +20,22 @@
 # downloading everything successfully, move the downloaded complete files to
 # /var/cache/apt/archives/.
 #
-# Version v2021.289
+# Version v2025.196
 script_name=dls.sh
 
 set -e
 trap 'test $? = 0 || echo "$0 failed!" >& 2' 0
+
+full_upgrade=false
+while getopts f opt
+do
+	case $opt in
+		f) full_upgrade=true;;
+		*) false || exit
+	esac
+done
+shift `expr $OPTIND - 1 || :`
+
 t=0
 {
 	cat << 'EOF'
@@ -62,7 +73,14 @@ nock() {
 EOF
 	if test -t 0
 	then
-		apt-get upgrade --with-new-pkgs --print-uris -qq
+		apt-get `
+			if $full_upgrade
+			then
+				echo dist-upgrade
+			else
+				echo upgrade --with-new-pkgs
+			fi
+		` --print-uris -qq
 	else
 		cat
 	fi \
