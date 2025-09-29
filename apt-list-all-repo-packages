@@ -1,0 +1,48 @@
+#! /bin/sh
+#
+# Write the name of all Debian packages to standard output, sorted by package
+# name. If option "-v" is specified, write the package version, too.
+#
+# The output will be sorted by package name then by version number
+# (lexicographically, no version sort). Exact duplicates of output lines will
+# be removed.
+#
+# Version v2025.272
+
+set -e
+trap 'test $? = 0 || echo "\"$0\" failed!" >& 2' 0
+
+include_version=false
+while getopts v opt
+do
+	case $opt in
+		v) include_version=true;;
+		*) false || exit
+	esac
+done
+shift `expr $OPTIND - 1 || :`
+
+cat /var/lib/apt/lists/*_Packages \
+| awk \
+	-f /dev/fd/5 \
+	-v include_version=$include_version \
+	5<< 'EO_AWK' \
+| sort -t ' ' -u -k 1,1 -k 2,2 \
+
+$0 == "" {process_entry()}
+$1 == "Package:" {p = $2}
+$1 == "Version:" {v = $2}
+END {process_entry()}
+
+function process_entry() {
+	if (p != "" && v != "") {
+		if (include_version == "true") {
+			print p " " v
+		} else {
+			print p
+		}
+	}
+	p = v = ""
+}
+
+EO_AWK

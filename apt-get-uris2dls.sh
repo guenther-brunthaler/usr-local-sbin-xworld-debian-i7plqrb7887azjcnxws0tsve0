@@ -20,7 +20,7 @@
 # downloading everything successfully, move the downloaded complete files to
 # /var/cache/apt/archives/.
 #
-# Version v2025.196
+# Version v2025.272
 script_name=dls.sh
 
 set -e
@@ -63,6 +63,10 @@ md5() {
 
 sha256() {
 	compare_cs sha256sum 64 "$1"
+}
+
+sha512() {
+	compare_cs sha512sum 128 "$1"
 }
 
 nock() {
@@ -111,6 +115,9 @@ EOF
 		elif s=${m#SHA256:} && test x"$s" != x"$m"
 		then
 			echo "sha256 $s"
+		elif s=${m#SHA512:} && test x"$s" != x"$m"
+		then
+			echo "sha512 $s"
 		elif test -z "$m"
 		then
 			echo nock
