@@ -1,8 +1,8 @@
 #! /bin/sh
 exit_version() {
 	wr << EOF; exit
-$APP version 2020.56
-Copyright (c) 2018-2020 Guenther Brunthaler. All rights reserved.
+$APP version 2025.294
+Copyright (c) 2018-2025 Guenther Brunthaler. All rights reserved.
 
 This script is free software.
 Distribution is permitted under the terms of the GPLv3.
@@ -14,7 +14,8 @@ exit_help() {
 	wr --flowtext << EOF
 $APP - create empty metapackages which just depend on other packages
 
-Usage: $APP [ <options> ] [--] [ <software_name> ] <dependencies> ...
+Usage: $APP [ <options> ] [--] [ <package_name> | <software_name> ]
+<dependencies> ...
 
 $APP synthesizes a new pseudo *.deb file which depends on the specified other
 Debian packages, but does not install any actual files (other than the package
@@ -29,13 +30,23 @@ uninstall the dependencies (when "apt-get autoremove" is run as it will be
 suggested by "apt-get remove", and assuming no other package also needs them
 as dependencies).
 
-The name of the pseudo-package will be composed of <software_name>, a dash,
-and a truncated MD5-hash of the sorted dependencies. The latter ensures
-uniqueness of the resulting pseudo-package name, even if <software_name>
-should happen to be the name of an already-installed package. On the other
-hand, differently-named pseudo-packages actually representing the same
-dependencies can easily be identified by comparing the name parts after the
-last dash.
+The <package_name> of the pseudo-package will be composed of <software_name>,
+a dash, and a truncated MD5-hash of the sorted dependencies. The latter
+ensures uniqueness of the resulting pseudo-package name, even if
+<software_name> should happen to be the name of an already-installed package.
+On the other hand, differently-named pseudo-packages actually representing the
+same dependencies can easily be identified by comparing the name parts after
+the last dash.
+
+Rather than specifying <software_name> and letting $APP calculate an MD5
+suffix for it from the dependencies, it is also possible to specify the whole
+<package_name> which already includes an MD5-derived suffix. It is recommended
+to use this method if later revisions of <software_name> have a changed set of
+dependencies. Specifying <package_name> rathern than <software_name> then
+allows to keen using the current name, which is especially helpful if other
+existing packages already depend on the current name. Otherwise, all those
+other packages would need to be modified because of the changed dependency
+name.
 
 <software_name> may optionally include version numbers, allowing different
 dependency pseudo-packages to be created for different versions of
@@ -127,7 +138,8 @@ When specifying the dependencies as separate options, i. e. when option -d is
 not used, then option -a selects the name as the fist dependency also as the
 <software_name>. Obviously, this must not be combined with option -d. -a is
 highly useful when creating suite packages using the primary package of the
-suite also as the suite's metapackage <software_name>.
+suite also as the suite's metapackage <software_name>. Note that -a cannot be
+used when specifying a <package_name> rather than a <software_name>.
 
 -m: Change the text in the description of the synthesized metapackage in order
 to indicate that the specified software name is actually the name of a
@@ -392,7 +404,12 @@ command -v equivs-control > /dev/null 2>& 1 || sudo apt-get install equivs
 TD=`mktemp -d -- "${TMPDIR:-/tmp}/$APP".XXXXXXXXXX`
 (
 	cd -- "$TD"
-	dp=$psdpkn-`mkid "$deps"`
+	if t=`expr x"$psdpkn" : x'\(.*\)-[0-9a-f]\{24\}$'`
+	then
+		dp=$psdpkn psdpkn=$t
+	else
+		dp=$psdpkn-`mkid "$deps"`
+	fi
 	if $just_a_bundle
 	then
 		pkgtype='software-bundle metapackage'
